@@ -3,8 +3,12 @@ from django.conf.urls.static import static
 from django.contrib import admin
 from django.urls import include, path
 
+from config.views import health
+
 urlpatterns = [
     path("admin/", admin.site.urls),
+    # 200 / 503: are PostgreSQL and Redis reachable (docker-compose healthcheck)
+    path("health/", health, name="health"),
     # Login / logout / sign up: /accounts/login/, ... (namespace "users")
     path("accounts/", include("users.urls")),
     # Bookstore catalog lives at the site root; namespace "books" comes

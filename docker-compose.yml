@@ -84,6 +84,23 @@ services:
       - static_data:/app/staticfiles
       # uploaded covers: survive rebuilding and recreating the container
       - media_data:/app/media
+    healthcheck:
+      # GET /health/ from inside the container (config/views.py: checks
+      # PostgreSQL and Redis). The slim image has no curl or wget, so Python
+      # does the request: urlopen raises an error for 503 or no answer ->
+      # exit code 1 -> the check failed; 200 -> exit code 0.
+      # "localhost" is allowed by DJANGO_ALLOWED_HOSTS in .env.
+      test:
+        - "CMD"
+        - "python"
+        - "-c"
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/', timeout=3)"
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      # migrate + collectstatic + gunicorn start take a few seconds;
+      # failures during this time don't count
+      start_period: 30s
     depends_on:
       # Start web only when db and redis pass their healthchecks, not just
       # when their containers are started: PostgreSQL needs a few seconds

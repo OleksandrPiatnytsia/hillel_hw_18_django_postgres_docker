@@ -21,8 +21,14 @@ class RequestTimingMiddleware:
     """
 
     # Requests that are not worth a log line (the header is still added):
-    # the toolbar's own AJAX calls and book covers (up to 10 per catalog page)
-    SKIP_LOG_PREFIXES = ("/__debug__/", "/" + settings.MEDIA_URL.lstrip("/"))
+    # the toolbar's own AJAX calls, book covers (up to 10 per catalog page)
+    # and /health/ (Docker calls it every few seconds; a failed check is
+    # logged by the health view itself, with the reason)
+    SKIP_LOG_PREFIXES = (
+        "/__debug__/",
+        "/" + settings.MEDIA_URL.lstrip("/"),
+        "/health/",
+    )
 
     def __init__(self, get_response):
         # Called ONCE, when the server starts. get_response is the next
