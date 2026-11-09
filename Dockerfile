@@ -61,6 +61,12 @@ RUN mkdir -p staticfiles media logs \
 # From here on, and when the container runs, everything runs as "app"
 USER app
 
+# Runs before every command of the container: migrate + collectstatic,
+# then `exec` of the CMD below (or of the command given to
+# `docker compose run web ...`). See docker-entrypoint.sh.
+# It needs the executable bit: git keeps it (chmod +x), COPY . . copies it.
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
 # Documentation only: the app listens on 8000. The port on your machine
 # is opened by "ports:" in docker-compose.yml.
 EXPOSE 8000

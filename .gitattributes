@@ -1,0 +1,4 @@
+# Shell scripts always with LF line endings, even if the repo is cloned on
+# Windows (git there may turn LF into CRLF). In a Linux container a script
+# with CRLF fails: "/bin/sh^M: bad interpreter" / "set: illegal option -".
+*.sh text eol=lf
