@@ -1,0 +1,41 @@
+# Files that `docker build` does NOT send to Docker (the "build context"),
+# so `COPY . .` in the Dockerfile doesn't put them into the image.
+# Reasons: secrets, local data, things the image makes itself, or junk
+# that only makes the image bigger and the build slower.
+
+# Secrets: settings come from env_file in docker-compose.yml at run time.
+# A .env baked into the image would be readable by anyone who has the image.
+.env
+
+# Local virtual environment: built for macOS, useless in Linux;
+# the image installs its own packages from requirements.txt
+.venv
+venv
+
+# Git history and IDE settings
+.git
+.gitignore
+.idea
+.vscode
+
+# Python caches
+__pycache__
+*.py[cod]
+
+# Local data: the database lives in the PostgreSQL container,
+# covers in the media_data volume
+*.sqlite3
+db.sqlite3-journal
+media
+data.json
+books_data.json
+
+# Made at run time inside the container (volumes)
+staticfiles
+logs
+
+# Docker files themselves: not needed inside the image, and a change in
+# them would otherwise invalidate the "COPY . ." layer cache
+Dockerfile
+.dockerignore
+docker-compose.yml
