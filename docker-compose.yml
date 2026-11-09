@@ -26,6 +26,17 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      # Extra arguments for initdb, also used only on the FIRST start.
+      # Ukrainian sorting rules (ICU) for the whole database. Without it the
+      # Alpine image uses libc collation, and musl (Alpine's C library) has
+      # no language rules: strings are compared by Unicode code points, so
+      # "Іван" (І = U+0406) comes before "Андрій" (А = U+0410), lowercase
+      # letters come after all uppercase ones, and "Ґ" (U+0490) is last.
+      # ICU = a library with sorting rules for most languages, built into
+      # this image (collation "uk-UA-x-icu").
+      # Changing this line later does nothing to an existing database:
+      # the db volume has to be deleted and the data loaded again.
+      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=uk-UA"
     volumes:
       # Database files live in a named volume, not in the container:
       # they survive `docker compose down` and image updates.
