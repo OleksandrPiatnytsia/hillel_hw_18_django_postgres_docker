@@ -1,27 +1,20 @@
 # hillel_hw_18 — Django: книгарня в Docker (PostgreSQL, Redis)
 
-Навчальний Django-проєкт (Hillel). Продовження ДЗ №14 (сайт книгарні на
-Class-Based Views). У цьому ДЗ:
+Навчальний Django-проєкт (Hillel). Продовження ДЗ №16 (автентифікація, права
+доступу, логування). У цьому ДЗ:
 
-- **Custom User Model** (`users.User`) з обов'язковим унікальним email у нижньому регістрі;
-- **вхід, вихід, реєстрація**: `LoginView`, `LogoutView` (тільки POST), `CreateView` з автоматичним входом;
-- **permissions і groups**: групи Customers / Editors / Managers, `PermissionRequiredMixin`,
-  `LoginRequiredMixin`, `perms` у шаблонах, власний permission `manage_stock`;
-- **Django Debug Toolbar** лише для розробки (`DEBUG` + `INTERNAL_IPS`);
-- **logging**: консоль і файл із ротацією; вхід, вихід, невдалі спроби входу, зміни книжок;
-- власний **middleware** `RequestTimingMiddleware`: час кожного запиту в лозі й у заголовках.
-
-Що вже є з ДЗ №14:
-
-- **Class-Based Views**: `ListView`, `DetailView`, `CreateView`, `UpdateView`, `DeleteView`;
-- **Django Templates з Bootstrap 5**: базовий шаблон, navbar, пагінація, фільтри;
-- **статичні файли** і **URLconf з namespace**;
-- понад завдання: **обкладинки книг** (завантаження файлів, media).
+- **docker-compose**: сервіси `web` (Django + gunicorn), `db` (PostgreSQL 17), `redis` (Redis 8);
+- **volumes** для бази, статики й обкладинок; **healthchecks** для всіх трьох сервісів;
+- **`docker-entrypoint.sh`**: міграції й `collectstatic` автоматично при кожному старті;
+- **перенесення даних** з SQLite у PostgreSQL (`dumpdata` / `loaddata` з природними ключами);
+- **налаштування з `.env`**: PostgreSQL, Redis (кеш і сесії), WhiteNoise для статики;
+- `/health/`: перевірка PostgreSQL і Redis (200 / 503).
 
 ## Стек
 
 - Python 3.13, Django 6.1
-- SQLite
+- PostgreSQL 17 (`psycopg` 3), Redis 8 (вбудований у Django `RedisCache`)
+- Docker, docker compose; gunicorn; WhiteNoise (статика без nginx)
 - Bootstrap 5.3 (через CDN, із перевіркою `integrity`)
 - Pillow: перевірка зображень для `ImageField`
 - python-dotenv: налаштування з `.env`
@@ -29,8 +22,6 @@ Class-Based Views). У цьому ДЗ:
 
 ## Сторінки сайту
 
-| URL | Ім'я маршруту | View | Що робить |
-|---|---|---|---|
 | URL | Ім'я маршруту | View | Доступ | Що робить |
 |---|---|---|---|---|
 | `/` | `books:list` | `BookListView` | усі | каталог: фільтри, сортування, пагінація по 10 книг |
@@ -45,6 +36,7 @@ Class-Based Views). У цьому ДЗ:
 | `/accounts/signup/` | `users:signup` | `SignUpView` | гості | реєстрація |
 | `/accounts/profile/` | `users:profile` | `ProfileView` | залогінені | групи й права поточного користувача |
 | `/admin/` | `admin:index` | | `is_staff` | адмінка |
+| `/health/` | `health` | `health` (`config/views.py`) | усі, GET | стан PostgreSQL і Redis: 200 або 503, JSON |
 | `/__debug__/` | | | `DEBUG` + `INTERNAL_IPS` | службові адреси Debug Toolbar |
 
 Маршрути описані в `books/urls.py` (`app_name = "books"`) і `users/urls.py`
@@ -56,8 +48,9 @@ Class-Based Views). У цьому ДЗ:
 
 ```
 config/
-├── settings.py              # AUTH_USER_MODEL, LOGIN_*, Debug Toolbar, LOGGING, MIDDLEWARE
-├── urls.py                  # admin + books + accounts/ + media і __debug__ у DEBUG
+├── settings.py              # PostgreSQL, Redis, WhiteNoise, AUTH_USER_MODEL, Debug Toolbar, LOGGING
+├── urls.py                  # admin + books + accounts/ + health/ + media і __debug__ у DEBUG
+├── views.py                 # health: перевірка PostgreSQL і Redis
 ├── middleware.py            # RequestTimingMiddleware
 └── logging_filters.py       # HideClientErrorTraceback (403/404 без traceback)
 users/
@@ -81,8 +74,6 @@ books/
 ├── views.py                 # Class-Based Views для книг і авторів
 ├── urls.py                  # app_name = "books"
 ├── admin.py                 # адмінка (+ мініатюри обкладинок)
-├── apps.py                  # підключення сигналу для SQLite
-├── sqlite_functions.py      # пошук без урахування регістру для кирилиці
 ├── templates/books/
 │   ├── book_list.html
 │   ├── book_detail.html
@@ -111,6 +102,11 @@ media/                       # завантажені обкладинки (не
 logs/                        # app.log і його ротації (не в git)
 requirements.txt             # залежності проєкту
 requirements-dev.txt         # + django-debug-toolbar
+Dockerfile                   # образ web: python:3.13-slim, користувач app, gunicorn
+.dockerignore                # що не потрапляє в образ (.env, .venv, бази, media)
+docker-entrypoint.sh         # migrate + collectstatic, потім exec команди
+docker-compose.yml           # web + db + redis, volumes, healthchecks
+.gitattributes               # *.sh завжди з LF
 ```
 
 ## Користувачі та автентифікація
@@ -234,6 +230,12 @@ ENABLE_DEBUG_TOOLBAR = (
 Тулбар зберігає дані в пам'яті (`MemoryStore`), тому його міграція прихована
 і `migrate` її не показує, це нормально.
 
+**У Docker тулбара немає:** образ ставить лише `requirements.txt`, і
+`find_spec("debug_toolbar")` повертає `None`. Це навмисно: запити з Mac
+приходять у контейнер з адреси шлюзу Docker (`192.168.65.1`), а не з
+`127.0.0.1`, тож для тулбара довелося б розширювати `INTERNAL_IPS`. Для
+налагодження з тулбаром запускайте `runserver` локально (див. «Встановлення та запуск»).
+
 ## Логування
 
 `LOGGING` у `config/settings.py`: вивід у консоль і у файл `logs/app.log`
@@ -260,8 +262,14 @@ ENABLE_DEBUG_TOOLBAR = (
   дочірнього `django.request`.
 
 ```bash
-tail -f logs/app.log
+tail -f logs/app.log             # локальний runserver
+docker compose logs -f web       # у Docker: консольний вивід контейнера
 ```
+
+У Docker `logs/app.log` пишеться всередині контейнера й зникає, коли контейнер
+перестворюється (volume для логів немає). Основне джерело там — `docker compose logs`.
+Access log gunicorn вимкнено: рядок на кожен запит уже пише `RequestTimingMiddleware`,
+а `/health/` (Docker перевіряє його кожні 10 секунд) middleware не логує.
 
 ## Middleware: `RequestTimingMiddleware`
 
@@ -274,7 +282,7 @@ INFO config.middleware GET /create/ 403 3.6ms user=ann
 ```
 
 - **Лог:** метод, шлях із query string, статус, час, користувач. Запити довші
-  за `REQUEST_SLOW_MS = 500` пишуться як WARNING. `/media/` і `/__debug__/` не логуються.
+  за `REQUEST_SLOW_MS = 500` пишуться як WARNING. `/media/`, `/__debug__/` і `/health/` не логуються.
 - **Заголовки:** `X-Request-Duration: 23.6ms` і стандартний
   `Server-Timing: app;dur=23.6` (видно в DevTools → Network → Timing).
 - Час рахується через `time.perf_counter()` (монотонний годинник).
@@ -343,12 +351,17 @@ INFO config.middleware GET /create/ 403 3.6ms user=ann
 | Що це | CSS, іконки, заглушка обкладинки | обкладинки, завантажені через форму |
 | Де лежить | `static/` (у git) | `media/covers/<рік>/<місяць>/` (не в git) |
 | Налаштування | `STATIC_URL`, `STATICFILES_DIRS`, `STATIC_ROOT` | `MEDIA_URL`, `MEDIA_ROOT` |
-| Хто роздає в розробці | `runserver` сам | `static()` у `config/urls.py` (тільки при `DEBUG=True`) |
+| Хто роздає локально | `runserver` сам | `static()` у `config/urls.py` (тільки при `DEBUG=True`) |
+| Хто роздає в Docker | WhiteNoise з `STATIC_ROOT` (volume `static_data`) | `static()`, тому в Docker `DJANGO_DEBUG=True` |
 
 - У шаблонах статика підключається через `{% load static %}` і `{% static '...' %}`.
-- Для продакшну: `python manage.py collectstatic` збирає всю статику в
-  `staticfiles/` (теж не в git). При `DEBUG=False` статику й media має
-  роздавати вебсервер (nginx) або сховище.
+- `collectstatic` запускає `docker-entrypoint.sh` при кожному старті контейнера.
+  `CompressedStaticFilesStorage` (WhiteNoise) додатково створює стиснені `.gz` і `.br` копії.
+  Не `CompressedManifestStaticFilesStorage`: при `DEBUG=False` (а `manage.py test`
+  завжди працює з ним) він вимагає вже зібраний manifest, і тести з `{% static %}` падали б.
+- WhiteNoise роздає лише статику, яка була на диску при старті, а не завантажені
+  файли. Тому обкладинки в Docker роздає Django при `DEBUG=True`. Правильне
+  рішення для продакшну — nginx (окрема задача).
 
 ### Обкладинки книг
 
@@ -406,37 +419,162 @@ Django згенерував би `AlterField` і спробував би пер�
 
 ## Встановлення та запуск
 
+### У Docker
+
+```bash
+cp .env.example .env
+# згенерувати SECRET_KEY і вставити в .env В ОДИНАРНИХ ЛАПКАХ (див. нижче):
+python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+# заповнити POSTGRES_PASSWORD
+
+docker compose up --build -d                                   # зібрати образ і запустити
+docker compose ps                                              # усі три сервіси (healthy)
+docker compose exec web python manage.py createsuperuser
+docker compose exec web python manage.py seed_books            # або перенести дані, див. нижче
+```
+
+- Сайт: http://localhost:8000/
+- Адмінка: http://localhost:8000/admin/
+- Стан: http://localhost:8000/health/
+- Лог: `docker compose logs -f web`
+
+```
+docker compose up
+  ├─ db     postgres:17-alpine  ──┐ healthcheck: pg_isready
+  ├─ redis  redis:8-alpine      ──┤ healthcheck: redis-cli ping
+  │                               ▼ обидва healthy (depends_on: condition: service_healthy)
+  └─ web    Dockerfile → docker-entrypoint.sh → migrate → collectstatic → exec gunicorn
+                                    healthcheck: GET /health/
+```
+
+| Сервіс | Порт на Mac | Volume | Healthcheck |
+|---|---|---|---|
+| `db` | 5432 | `postgres_data` → `/var/lib/postgresql/data` | `pg_isready` |
+| `redis` | 6379 | немає (кеш можна втратити, сесії є і в PostgreSQL) | `redis-cli ping` |
+| `web` | 8000 | `static_data` → `/app/staticfiles`, `media_data` → `/app/media` | `GET /health/` (Python `urllib`, у slim-образі немає curl) |
+
+Корисні команди:
+
+```bash
+docker compose logs -f web                         # вивід Django / gunicorn
+docker compose exec web python manage.py shell     # команда в запущеному контейнері
+docker compose restart web                         # перезапуск (entrypoint знову зробить migrate)
+docker compose down                                # зупинити й видалити контейнери, volumes лишаються
+docker compose down -v                             # ... і ВИДАЛИТИ volumes: базу й обкладинки!
+```
+
+**Що варто знати:**
+
+- `docker-entrypoint.sh` має `set -e`: якщо `migrate` впаде, gunicorn не стартує.
+  `exec "$@"` робить gunicorn процесом PID 1, тому він отримує `SIGTERM` від
+  `docker compose stop` і завершується коректно.
+- Контейнер працює від користувача `app` (не root). Писати він може лише в
+  `staticfiles/`, `media/`, `logs/`. Файли, скопійовані через `docker compose cp`,
+  належать root: `docker compose exec -u root web chown -R app:app /app/media`.
+- `.env` не потрапляє в образ (`.dockerignore`), compose передає змінні через
+  `env_file`. Хости в `.env` — `localhost` (для локального запуску);
+  `docker-compose.yml` перевизначає їх для `web`: `POSTGRES_HOST=db`,
+  `REDIS_URL=redis://redis:6379/0` (сервіси бачать один одного за іменем).
+- **`$` у значеннях `.env`.** Docker compose сприймає `$abc` як змінну й підставляє
+  порожній рядок (`WARN The "abc" variable is not set`). Ключ від
+  `get_random_secret_key()` може містити `$`, тому його беремо в **одинарні**
+  лапки: `DJANGO_SECRET_KEY='...'`. Подвійні лапки не допомагають.
+- gunicorn запускається з `--no-control-socket`: з версії 25.1 він відкриває сокет
+  для `gunicornc` у `$HOME`, а в користувача `app` немає домашньої папки.
+
+### Локально (runserver + PostgreSQL і Redis з Docker)
+
+Для розробки з Debug Toolbar. PostgreSQL і Redis беруться з контейнерів через
+опубліковані порти (`POSTGRES_HOST=localhost`, `REDIS_URL=redis://localhost:6379/0` у `.env`).
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt   # або requirements.txt без Debug Toolbar
 
-cp .env.example .env
-# згенерувати SECRET_KEY і вставити в .env:
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-
-python manage.py migrate            # таблиці + групи Customers / Editors / Managers
-python manage.py createsuperuser    # username, email, пароль
-python manage.py seed_books
+docker compose up -d db redis         # тільки база й Redis
+python manage.py migrate
 python manage.py runserver
 ```
 
 - Сайт: http://127.0.0.1:8000/ (саме `127.0.0.1`, щоб з'явився Debug Toolbar)
-- Адмінка: http://127.0.0.1:8000/admin/
 - Лог: `logs/app.log`
+- Якщо контейнер `web` теж запущений, він уже займає порт 8000:
+  `docker compose stop web` або `runserver 8001`.
 
-Щоб перевірити права: зареєструйте кілька користувачів через «Sign up»
-(вони потраплять у Customers), в адмінці переведіть одного в Editors, іншого в
-Managers і порівняйте `/accounts/profile/`, кнопки на сторінці книги та поле
-Stock у формі.
+### Перенесення даних із SQLite у PostgreSQL
+
+Так дані з ДЗ №16 (`db.sqlite3`, `media/`) переїхали в Docker:
+
+```bash
+# 1. Поки settings.py ще на SQLite (до перемикання на PostgreSQL):
+DJANGO_DEBUG=False python manage.py dumpdata --natural-foreign --natural-primary --exclude contenttypes --exclude auth.permission --exclude admin.logentry --exclude sessions --indent 2 -o data.json
+
+# 2. У запущений контейнер web (migrate вже створив таблиці й групи):
+docker compose cp data.json web:/tmp/data.json
+docker compose exec web python manage.py loaddata /tmp/data.json
+docker compose exec -u root web rm /tmp/data.json
+
+# 3. Обкладинки у volume media_data:
+docker compose cp media/. web:/app/media/
+docker compose exec -u root web chown -R app:app /app/media
+```
+
+- `DJANGO_DEBUG=False`: щоб у дамп не потрапив `debug_toolbar` (змінна з
+  командного рядка важливіша за `.env`, `load_dotenv()` її не перезаписує).
+- `--natural-foreign`: зв'язки за природними ключами, а не за `id`: група як
+  `["Editors"]`, permission як `["manage_stock", "books", "book"]`. `id` permissions
+  у PostgreSQL інші, тому інакше не можна.
+- `--natural-primary`: у `User` і `Group` немає `pk`. Групи вже створила
+  міграція `users.0003`, `loaddata` знаходить їх за назвою й оновлює, а не дублює.
+- `contenttypes`, `auth.permission` створює `migrate`; лог адмінки й сесії не переносимо.
+- Книги, автори, категорії переносяться зі своїми `id` (адреси `/15/` не змінюються).
+  `loaddata` на PostgreSQL сам скидає sequences: нова книга отримує наступний `id`.
+- `data.json` містить хеші паролів і email, тому він у `.gitignore` і `.dockerignore`.
+- Перевірка: кількість записів кожної моделі збігається з дампом
+  (`bookcategory 18`, `book 12`, `author 10`, `category 5`, `group 3`, `user 3`).
 
 ### Змінні оточення (`.env`)
 
 | Змінна | Опис | Приклад |
 |---|---|---|
-| `DJANGO_SECRET_KEY` | секретний ключ (обов'язковий) | `change-me` |
-| `DJANGO_DEBUG` | режим налагодження; при `False` runserver не роздає статику й media | `True` |
-| `DJANGO_ALLOWED_HOSTS` | хости через кому | `127.0.0.1,localhost` |
+| `DJANGO_SECRET_KEY` | секретний ключ (обов'язковий), в одинарних лапках | `'change-me'` |
+| `DJANGO_DEBUG` | режим налагодження; при `False` media не роздаються (і в Docker теж) | `True` |
+| `DJANGO_ALLOWED_HOSTS` | хости через кому (`localhost` потрібен і для healthcheck) | `127.0.0.1,localhost` |
+| `POSTGRES_DB` | назва бази (обов'язкова); контейнер `db` створює її при першому старті | `bookstore` |
+| `POSTGRES_USER` | користувач бази (обов'язковий) | `bookstore` |
+| `POSTGRES_PASSWORD` | пароль (обов'язковий) | |
+| `POSTGRES_HOST` | `localhost` для runserver; у Docker compose ставить `db` | `localhost` |
+| `POSTGRES_PORT` | порт | `5432` |
+| `REDIS_URL` | Redis для кешу й сесій; у Docker compose ставить `redis://redis:6379/0` | `redis://localhost:6379/0` |
+
+`POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` читають і Django, і образ
+`postgres`, тому один `.env` обслуговує обидва. Змінювати їх після першого старту
+`db` марно: база вже створена у volume.
+
+## Redis
+
+- **Кеш** (`CACHES`, `RedisCache`): один спільний для всіх worker-процесів gunicorn
+  (`LocMemCache` за замовчуванням був би окремим у кожному процесі).
+- **Сесії** (`SESSION_ENGINE = cached_db`): читаються з Redis, записуються і в
+  Redis, і в PostgreSQL. Після перезапуску Redis ніхто не вилогінюється.
+
+## `/health/`
+
+`config/views.py`: `SELECT 1` у PostgreSQL і `cache.set` / `cache.get` випадкового
+значення в Redis.
+
+```
+200 {"status": "ok", "database": "ok", "cache": "ok"}
+503 {"status": "error", "database": "ok", "cache": "error"}
+```
+
+- 503, а не 500: Django працює, недоступний сервіс, від якого він залежить.
+- Подробиці помилки пишуться тільки в лог (`config.views`), не у відповідь.
+- `@never_cache`, `@require_GET`; сесію не читає, тому працює й без Redis.
+- Перевірено: `docker compose stop redis` → 503, `web` за ~30 с стає `unhealthy`;
+  `docker compose start redis` → знову `healthy` без перезапуску `web`.
+  Docker compose сам `unhealthy`-контейнери не перезапускає, лише показує стан.
 
 ## Management-команди
 
@@ -480,31 +618,53 @@ python manage.py book_stats --sql   # також показати згенеро
 | `--category` | `fentezi` | slug категорії |
 | `--sql` | | друкувати SQL кожного запиту |
 
-## Пошук кирилицею в SQLite
+## Кирилиця в PostgreSQL
 
-Вбудований оператор `LIKE` в SQLite ігнорує регістр тільки для латиниці,
-тому стандартний `icontains` не знаходив «Вбивство» за запитом «вбив».
+**Пошук.** `icontains` на PostgreSQL — це `UPPER(title) LIKE UPPER('%вбив%')`, і
+`UPPER` для кирилиці працює правильно. Тому `books/sqlite_functions.py` з ДЗ №16
+(власний `LIKE` для SQLite) видалено.
 
-`books/sqlite_functions.py` замінює функцію, що стоїть за `LIKE`, на
-Python-версію з `str.casefold()`. Реєструє її сигнал `connection_created`
-(підключається в `BooksConfig.ready()`) для кожного нового з'єднання з базою.
-Тепер без урахування регістру шукають каталог, адмінка й `book_stats --search`.
+**Сортування.** Образ `postgres:17-alpine` за замовчуванням створює базу з
+collation libc (`en_US.utf8`, провайдер `c`). Але musl (бібліотека C в Alpine)
+не має правил сортування для мов, тому рядки порівнювались за кодами Unicode,
+як у SQLite:
 
-Компроміси:
-- `LIKE` виконується в Python і працює трохи повільніше;
-- як і вбудований `LIKE` в SQLite, `contains` (без `i`) теж не враховує регістр;
-- на PostgreSQL / MySQL модуль нічого не робить, вони коректно працюють з Unicode самі.
+```
+Є (U+0404)  І (U+0406)  Ї (U+0407)  А…Я (U+0410–042F)  а…я (U+0430–044F)  Ґ (U+0490)
+ORDER BY:  Євген, Іван, Ївга, Андрій, Борис, …, Яна, андрій, Ґанна
+```
+
+Рішення — ICU (бібліотека з правилами сортування для мов, вбудована в образ):
+
+```yaml
+POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=uk-UA"
+```
+
+```
+ORDER BY:  андрій, Андрій, Борис, Гліб, Ґанна, Євген, Ирина, Іван, Ївга, Яна
+```
+
+- Діє на всю базу: моделі й `order_by` не змінювались.
+- `initdb` виконується лише на порожньому volume. Щоб застосувати до існуючої
+  бази: `docker compose down`, `docker volume rm <проєкт>_postgres_data`,
+  `docker compose up -d` і знову `loaddata` (volume `media_data` не чіпаємо,
+  тому **не** `down -v`).
+- Перевірка: `SELECT datlocprovider FROM pg_database WHERE datname = current_database()`
+  повертає `i` (ICU).
 
 ## Відомі обмеження
 
 - **Старі файли обкладинок не видаляються.** Django не прибирає файл з
   диска, коли книгу видалено, обкладинку замінено або позначено «Remove».
-  Такі файли лишаються в `media/`.
-- **Сортування кирилиці в SQLite.** SQLite порівнює рядки за кодами
-  символів Unicode, тому українська «І» стоїть перед «А» («Іван Багряний»
-  опиняється першим у списку авторів). Стосується сортування авторів і книг за назвою.
-- **IP у логах — це `REMOTE_ADDR`.** За проксі (nginx) там буде адреса
-  проксі; справжню треба брати з `X-Forwarded-For`, налаштувавши довіру до проксі.
+  Такі файли лишаються в `media/` (у Docker — у volume `media_data`).
+- **Docker працює з `DJANGO_DEBUG=True`.** Інакше Django не роздає обкладинки,
+  а WhiteNoise вміє лише статику. Для продакшну потрібен nginx (окрема задача):
+  він роздаватиме `/media/` і `/static/` з volumes, а Django перейде на `DEBUG=False`.
+- **IP у логах — це `REMOTE_ADDR`.** У Docker це адреса шлюзу (`192.168.65.1`),
+  за проксі (nginx) буде адреса проксі; справжню треба брати з `X-Forwarded-For`,
+  налаштувавши довіру до проксі.
+- **`logs/app.log` у контейнері не зберігається** між перестворенням контейнера
+  (немає volume); у Docker логи дивимось через `docker compose logs`.
 - **Вихід у лозі middleware показується як `user=anonymous`**: `logout()`
   змінює `request.user` раніше, ніж middleware його читає. Хто вийшов, видно в
   рядку `Logout: user=...` від сигналу.
@@ -515,6 +675,7 @@ Python-версію з `str.casefold()`. Реєструє її сигнал `con
 
 ## Плани
 
+- nginx перед gunicorn: роздача static і media, `DEBUG=False` у Docker;
 - i18n: українська та англійська мови інтерфейсу;
 - валюти: модель `Currency` (UAH, USD);
 - скидання пароля й підтвердження email;
