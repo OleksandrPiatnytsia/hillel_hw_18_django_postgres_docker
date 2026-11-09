@@ -78,7 +78,14 @@ EXPOSE 8000
 #                             127.0.0.1 would be reachable only from inside it
 #   --workers 3             - 3 processes handle requests in parallel
 #   --access-logfile -      - one line per request to stdout (docker logs)
+#   --no-control-socket     - no control socket. Since gunicorn 25.1 it opens
+#                             a unix socket for the `gunicornc` tool (worker
+#                             status, reload) at $HOME/.gunicorn/gunicorn.ctl.
+#                             Our "app" user has no home folder, so without
+#                             this flag the log shows "Control server error:
+#                             Permission denied: '/home/app'". We don't use
+#                             gunicornc: `docker compose restart web` is enough.
 # The exec form ["...", "..."] (not a string): gunicorn becomes process
 # PID 1 itself and receives SIGTERM from `docker compose stop` directly,
 # so it finishes current requests and exits cleanly.
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--access-logfile", "-"]
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--access-logfile", "-", "--no-control-socket"]
