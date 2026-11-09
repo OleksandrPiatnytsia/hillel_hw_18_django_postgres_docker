@@ -77,7 +77,9 @@ EXPOSE 8000
 #   --bind 0.0.0.0:8000     - listen on all interfaces of the container;
 #                             127.0.0.1 would be reachable only from inside it
 #   --workers 3             - 3 processes handle requests in parallel
-#   --access-logfile -      - one line per request to stdout (docker logs)
+#   (no --access-logfile: RequestTimingMiddleware already logs one line per
+#   request, with the user and the duration; gunicorn's access log would
+#   repeat every request and add a line for every /health/ check)
 #   --no-control-socket     - no control socket. Since gunicorn 25.1 it opens
 #                             a unix socket for the `gunicornc` tool (worker
 #                             status, reload) at $HOME/.gunicorn/gunicorn.ctl.
@@ -88,4 +90,4 @@ EXPOSE 8000
 # The exec form ["...", "..."] (not a string): gunicorn becomes process
 # PID 1 itself and receives SIGTERM from `docker compose stop` directly,
 # so it finishes current requests and exits cleanly.
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--access-logfile", "-", "--no-control-socket"]
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--no-control-socket"]
