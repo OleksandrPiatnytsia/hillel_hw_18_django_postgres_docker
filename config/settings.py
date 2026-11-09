@@ -71,6 +71,11 @@ MIDDLEWARE = [
     # Our middleware, first: its timer covers every middleware below + the view
     "config.middleware.RequestTimingMiddleware",
     "django.middleware.security.SecurityMiddleware",
+    # WhiteNoise: serves the collected static files (STATIC_ROOT) from
+    # gunicorn, without nginx. Right after SecurityMiddleware (WhiteNoise
+    # docs): static responses still get the security headers, but skip
+    # sessions, auth, CSRF and the rest below.
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -124,12 +129,56 @@ WSGI_APPLICATION = "config.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
+#
+# PostgreSQL only. The values come from environment variables (.env):
+#   - POSTGRES_DB / POSTGRES_USER / POSTGRES_PASSWORD: required. The same
+#     names are read by the official postgres Docker image, which creates
+#     this database and user on its first start, so one .env serves both.
+#   - POSTGRES_HOST: "localhost" when Django runs on your machine
+#     (runserver, tests) and connects to the port published by the db
+#     container; docker-compose.yml sets it to "db" (the service name)
+#     for the web container.
+#   - POSTGRES_PORT: 5432 by default.
+# os.environ[...] (not getenv) for the required ones: a missing variable
+# stops Django at start with a clear KeyError instead of a vague
+# connection error later.
+
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "db.sqlite3",
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ["POSTGRES_DB"],
+        "USER": os.environ["POSTGRES_USER"],
+        "PASSWORD": os.environ["POSTGRES_PASSWORD"],
+        "HOST": os.getenv("POSTGRES_HOST", "localhost"),
+        "PORT": os.getenv("POSTGRES_PORT", "5432"),
+        # Keep a connection open for 60 seconds and reuse it for the next
+        # requests, instead of a new connection for every request
+        "CONN_MAX_AGE": 60,
+        # Before reusing a kept connection, check that it is still alive
+        # (e.g. after the db container restarted)
+        "CONN_HEALTH_CHECKS": True,
     }
 }
+
+
+# Cache: Redis
+# https://docs.djangoproject.com/en/6.1/topics/cache/#redis
+#
+# Django's built-in Redis backend (needs the `redis` package).
+# REDIS_URL: redis://host:port/database_number. "localhost" for runserver;
+# docker-compose.yml sets redis://redis:6379/0 (the service name).
+
+CACHES = {
+    "default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    }
+}
+
+# Sessions: read from the Redis cache, written to both the cache and the
+# database (django_session table). Fast reads, and the logins survive a
+# Redis restart: on a cache miss Django reads the session from PostgreSQL.
+SESSION_ENGINE = "django.contrib.sessions.backends.cached_db"
 
 
 # Password validation
@@ -171,8 +220,27 @@ STATIC_URL = "static/"
 # Project-wide static files (css, images) that don't belong to a single app
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
-# Target directory for `collectstatic` (used in production, not in git)
+# Target directory for `collectstatic` (used in production, not in git).
+# In Docker it is a volume (static_data); WhiteNoise serves files from here.
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# https://docs.djangoproject.com/en/6.1/ref/settings/#storages
+# "default" is Django's usual storage for uploaded files (covers in MEDIA_ROOT).
+# "staticfiles": WhiteNoise's storage. During `collectstatic` it also writes
+# a compressed copy of every file (style.css.gz, style.css.br); WhiteNoise
+# sends it to browsers that accept compression.
+# Not CompressedManifestStaticFilesStorage (names with a hash, style.4f3a.css):
+# with DEBUG=False it needs collectstatic to have run first, and
+# `manage.py test` always runs with DEBUG=False, so every test that renders
+# base.html ({% static %}) would fail with "Missing staticfiles manifest entry".
+STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
+    "staticfiles": {
+        "BACKEND": "whitenoise.storage.CompressedStaticFilesStorage",
+    },
+}
 
 
 # Media files (uploaded by users: book covers)

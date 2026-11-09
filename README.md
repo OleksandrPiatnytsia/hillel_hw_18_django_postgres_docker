@@ -1,4 +1,4 @@
-# hillel_hw_16 — Django: книгарня (автентифікація, права доступу, логування)
+# hillel_hw_18 — Django: книгарня в Docker (PostgreSQL, Redis)
 
 Навчальний Django-проєкт (Hillel). Продовження ДЗ №14 (сайт книгарні на
 Class-Based Views). У цьому ДЗ:

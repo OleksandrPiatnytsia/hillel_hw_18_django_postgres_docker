@@ -229,5 +229,9 @@ media/
 # Local data dump used to move books to the fresh DB (hw_16 stage 1)
 books_data.json
 
+# Data dump for the move SQLite -> PostgreSQL (hw_18).
+# Not committed: it holds users' emails and password hashes.
+data.json
+
 # Log files (LOGGING in config/settings.py)
 logs/
