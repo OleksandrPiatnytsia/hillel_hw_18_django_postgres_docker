@@ -1,0 +1,102 @@
+# Local Docker setup: Django (web) + PostgreSQL (db) + Redis (redis).
+#
+#   docker compose up --build -d   build the web image and start everything
+#   docker compose ps              state and health of the services
+#   docker compose logs -f web     follow the Django / gunicorn output
+#   docker compose down            stop and remove the containers (volumes stay)
+#   docker compose down -v         ... and DELETE the volumes (database too!)
+#
+# Variables like ${POSTGRES_DB} below are taken by docker compose from the
+# .env file next to this file (the same .env Django reads).
+#
+# The services find each other by service name: inside the Docker network
+# "db" and "redis" are host names (Docker's built-in DNS).
+
+services:
+  db:
+    # Official PostgreSQL image, Alpine variant (smaller).
+    # A fixed major version: 17 data files can't be opened by 18 without
+    # an upgrade, so the version must not change by itself.
+    image: postgres:17-alpine
+    environment:
+      # On the FIRST start (empty volume) the image creates this database
+      # and this user with this password. Later starts ignore them: the data
+      # is already in the volume. Only these three, not the whole .env:
+      # the database doesn't need DJANGO_SECRET_KEY.
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Database files live in a named volume, not in the container:
+      # they survive `docker compose down` and image updates.
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Published to your Mac: runserver, tests and PyCharm's database
+      # window connect to localhost:5432 (POSTGRES_HOST=localhost in .env).
+      # If PostgreSQL is already installed on the Mac and uses 5432,
+      # change the left number, e.g. "5433:5432", and POSTGRES_PORT=5433.
+      - "5432:5432"
+    healthcheck:
+      # pg_isready: "does the server accept connections?" (exit code 0 = yes).
+      # $$ = a literal $ for the shell inside the container: the variable is
+      # read there at check time, not substituted by compose.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s        # check every 5 seconds
+      timeout: 5s         # a check longer than this counts as failed
+      retries: 5          # 5 failures in a row -> "unhealthy"
+      start_period: 10s   # failures in the first 10 s don't count (start-up)
+
+  redis:
+    # Cache + sessions (CACHES / SESSION_ENGINE in settings.py).
+    # No volume: the cache may be lost on restart; sessions are also in
+    # PostgreSQL (cached_db), so nobody gets logged out.
+    image: redis:8-alpine
+    ports:
+      # For runserver on the Mac: REDIS_URL=redis://localhost:6379/0
+      - "6379:6379"
+    healthcheck:
+      # redis-cli ping -> "PONG" when the server works
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  web:
+    # Image from the Dockerfile in this folder
+    build: .
+    # All variables from .env go into the container (DJANGO_SECRET_KEY,
+    # DJANGO_DEBUG, POSTGRES_*, ...). The .env file itself is not in the
+    # image (.dockerignore).
+    env_file: .env
+    environment:
+      # "environment" wins over "env_file": in .env the hosts are
+      # "localhost" (for runserver on the Mac); inside the Docker network
+      # PostgreSQL and Redis are reached by service name.
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      # http://localhost:8000 on the Mac -> gunicorn in the container
+      - "8000:8000"
+    volumes:
+      # collectstatic output (docker-entrypoint.sh), served by WhiteNoise
+      - static_data:/app/staticfiles
+      # uploaded covers: survive rebuilding and recreating the container
+      - media_data:/app/media
+    depends_on:
+      # Start web only when db and redis pass their healthchecks, not just
+      # when their containers are started: PostgreSQL needs a few seconds
+      # before it accepts connections, and migrate in docker-entrypoint.sh
+      # would fail with "connection refused" (as in the stage 4 check).
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+# Named volumes: Docker keeps them in its own storage. `docker volume ls`
+# shows them with the project prefix (hillel_hw_18_..._postgres_data).
+volumes:
+  postgres_data:
+  static_data:
+  media_data:
